@@ -1,0 +1,4 @@
+*.o
+_build/
+*.txt
+priv/
