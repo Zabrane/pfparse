@@ -4,6 +4,11 @@
 #include <string.h>
 #include "erl_nif.h"
 
+/* TODO:
+ - Use unsigned integer type for loop indices and handle wrap-around properly 
+*/
+
+
 /* SYNTAX OF POLL FILES
 
 poll_file = { header_line }, { poll_line } ;
@@ -23,13 +28,6 @@ instance = lower, { lower | "_" } ;
 metric = lower, { lower | "_" };
 value = integer ;
 integer = digit, { digit };  
-*/
-
-/* TODO:
- - Use array syntax for functions that take pointer arguments (e.g. char x[static 1] instead of char* x)
- - Use unsigned integer type for loop indices and handle wrap-around properly (look at the header than gives you the max constants
-	and do e.g. if (i > MAX_UINT + 1) break;
- - 
 */
 
 enum { 
@@ -125,6 +123,7 @@ int skip_field(char** line, const int fs);
 int verify_text_field(char** p, char** end, const int fs, const int max);
 int parse_line(ErlNifEnv* env, const size_t n, char buffer[n], long unsigned int bytes_read[static 1], ERL_NIF_TERM parsed[static 1], int err[static 1]);
 int check_delim(parser* psr);
+int parser_init(parser* psr);
 
 ERL_NIF_TERM mk_atom(ErlNifEnv* env, const char* atom)
 {
@@ -258,7 +257,6 @@ static ERL_NIF_TERM nif_decode_chunk(ErlNifEnv* env, int argc, const ERL_NIF_TER
 
     unsigned long int bytes_read = 0;
     int err = 0;
-	//while (fgets(read_buf, res->buf_size + 1 - total, res->fd)) {
     for (size_t total = 0; total < res->buf_size + res->lo; total += bytes_read) {
         if(!fgets(read_buf, res->buf_size + 1 - total + res->lo, res->fd)) break;
 		if (count + 1 > term_arr_size) { 
@@ -267,12 +265,12 @@ static ERL_NIF_TERM nif_decode_chunk(ErlNifEnv* env, int argc, const ERL_NIF_TER
 		}
 		if (parse_line(env, res->buf_size + res->lo, parse_buf, &bytes_read, &term_arr[count], &err)) {
             count += 1;
+            if (res->lo) enif_free(parse_buf);
             res->lo = 0; /* reset left over count to 0 after first read */
             parse_buf = res->buf;
             read_buf = res->buf;
         } else break;
 	}
-
 
     res->lo = bytes_read;
 	ERL_NIF_TERM term_result = enif_make_list_from_array(env, term_arr, count);
@@ -280,19 +278,25 @@ static ERL_NIF_TERM nif_decode_chunk(ErlNifEnv* env, int argc, const ERL_NIF_TER
     return term_result;
 }
 
+int parser_init(parser* psr)
+{
+    psr->st = ps_ts;
+    psr->ts = 0;
+    psr->val = 0;
+    psr->cat = 0;
+    psr->cat_size = 0;
+    psr->st_c = 0;
+    psr->err = 0;
+
+    return 0;
+}
+
 int parse_line(ErlNifEnv* env, const size_t n, char buffer[n], long unsigned int bytes_read[static 1], ERL_NIF_TERM parsed[static 1], int err[static 1])
 {
-    // TODO: function for initializing parser struct
     parser psr;
+    parser_init(&psr);
     psr.p = buffer;
     psr.p0 = buffer;
-    psr.st = ps_ts;
-    psr.ts = 0;
-    psr.val = 0;
-    psr.cat = 0;
-    psr.cat_size = 0;
-    psr.st_c = 0;
-    psr.err = 0;
 
 	for (; psr.p[0]; ++psr.p) {  /* assuming here that `buffer` is a string */
 		if (psr.st_c > field_limits[psr.st] || psr.st == ps_err) {
